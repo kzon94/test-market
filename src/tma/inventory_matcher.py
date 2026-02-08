@@ -4,7 +4,7 @@ import csv
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 
 @dataclass(frozen=True)
@@ -17,7 +17,7 @@ class MatchedItem:
 @dataclass(frozen=True)
 class ParseResult:
     matched: List[MatchedItem]
-    unmatched: List[Tuple[str, int]]  # (name, qty)
+    unmatched: List[Tuple[str, int]]
 
 
 _QTY_LINE_RE = re.compile(r"^x\s*(\d+)$", re.IGNORECASE)
@@ -73,17 +73,10 @@ def load_dictionary(dict_csv_path: str | Path) -> Dict[str, int]:
 
 
 def parse_add_listings_text(raw_text: str, valid_item_names: Set[str]) -> List[Tuple[str, int, bool]]:
-    """
-    Returns a list of tuples: (name, qty, is_omitted)
-    - Omitted if block contains 'Equipped' or 'Untradable'
-    - Qty defaults to 1
-    - Includes items even if there is no price/RRP/Qty/Price section afterwards
-    """
     lines = [_clean_line(l) for l in raw_text.splitlines()]
     lines = [l for l in lines if l]
 
     results: List[Tuple[str, int, bool]] = []
-
     current_name: Optional[str] = None
     current_qty: int = 1
     current_omitted: bool = False
@@ -97,7 +90,6 @@ def parse_add_listings_text(raw_text: str, valid_item_names: Set[str]) -> List[T
         current_omitted = False
 
     for line in lines:
-        # Start of a new item block (exact line match)
         if line in valid_item_names:
             flush()
             current_name = line
@@ -105,7 +97,6 @@ def parse_add_listings_text(raw_text: str, valid_item_names: Set[str]) -> List[T
             current_omitted = False
             continue
 
-        # Start of a new item block with qty on same line: "Name x5"
         m_same = _NAME_QTY_SAME_LINE_RE.match(line)
         if m_same:
             possible_name = m_same.group(1).strip()
@@ -161,45 +152,3 @@ def match_inventory(raw_text: str, dict_csv_path: str | Path) -> ParseResult:
     matched.sort(key=lambda x: x.name)
 
     return ParseResult(matched=matched, unmatched=unmatched)
-
-
-def to_csv_rows(result: ParseResult) -> List[List[str]]:
-    rows = [["name", "id", "qty"]]
-    for it in result.matched:
-        rows.append([it.name, str(it.item_id), str(it.qty)])
-    return rows
-
-
-def main() -> None:
-    import argparse
-    import sys
-
-    parser = argparse.ArgumentParser(description="Parse Torn 'Add listings' inventory and match to item dictionary.")
-    parser.add_argument("--dict", default="torn_item_dictionary.csv", help="Path to torn_item_dictionary.csv")
-    parser.add_argument("--in", dest="input_path", default=None, help="Path to a text file with copied 'Add listings' content. If omitted, reads stdin.")
-    parser.add_argument("--out", dest="output_path", default=None, help="Optional output CSV path. If omitted, prints CSV to stdout.")
-    args = parser.parse_args()
-
-    if args.input_path:
-        raw_text = Path(args.input_path).read_text(encoding="utf-8", errors="replace")
-    else:
-        raw_text = sys.stdin.read()
-
-    result = match_inventory(raw_text, args.dict)
-
-    csv_rows = to_csv_rows(result)
-    out_text = "\n".join([",".join(r) for r in csv_rows])
-
-    if args.output_path:
-        Path(args.output_path).write_text(out_text, encoding="utf-8")
-    else:
-        print(out_text)
-
-    if result.unmatched:
-        sys.stderr.write(f"\nUnmatched items ({len(result.unmatched)}):\n")
-        for name, qty in result.unmatched[:200]:
-            sys.stderr.write(f"- {name} x{qty}\n")
-
-
-if __name__ == "__main__":
-    main()
